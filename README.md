@@ -89,11 +89,11 @@ You can then delete this gist folder. No installed Codex files need restoration.
 
 ## Credits
 
-\- [Hunter Beach](https://github.com/hunterbeach) —  fixed the sync part and documented the workaround.
+\- [Hunter Beach](https://gist.github.com/hunterbeach/dc4b74bda0e045e33f308099182b4f80) —  fixed the sync part and documented the workaround.
 
-\- [h5kk](https://github.com/h5kk) — discovered and verified that patching the feature flag enables the complete OAuth and device-pairing flow.
+\- [zdaar](https://github.com/zdaar/codex-hacks/tree/main) — control other devices patch.
 
-\- [russlib](https://github.com/russlib)\ — identified feature gate `782640499` and documented how the Windows bundle hides the controller tab.
+\- [brunolemos](https://gist.github.com/brunolemos/7466058059eae140a57a7c6a42f235ae)\ — Codex Desktop feature flag overrides
 
 \- Everyone contributing research, testing, and reports to \[OpenAI Codex issue #28919](https://github.com/openai/codex/issues/28919).
 
