@@ -17,6 +17,7 @@ Tested with Codex Desktop `26.715.7063.0` and `26.715.10079.0` on Windows 11.
 * Lists signed-in Codex devices available to control.
 * Opens projects on a connected remote host.
 * Imports preexisting projects from connected hosts into the Windows sidebar.
+* Imports preexisting remote chats and groups them under their matching remote projects.
 * Leaves the installed Codex package unchanged.
 
 ## Requirements
@@ -49,7 +50,7 @@ Tested with Codex Desktop `26.715.7063.0` and `26.715.10079.0` on Windows 11.
 
 The launcher writes diagnostics to `%TEMP%\codexwinsync.log`.
 
-Preexisting projects normally appear within 30 seconds after their host connects. The importer reads only project names and root paths from that host's Codex global state, adds missing entries to the Windows controller's project index, and never copies or deletes project files.
+Preexisting projects and chats normally appear within 30 seconds after their host connects. The importer reads project names and root paths from that host's Codex global state, lists the host's existing threads, and adds missing project and chat-to-project mappings to the Windows controller. If a remote chat was created without a saved project, its working directory becomes a remote project entry so the chat can be shown in the sidebar. Chat contents remain on the remote host and load from there when opened; the importer never copies or deletes project files or chat transcripts.
 
 ## How it works
 
@@ -66,6 +67,7 @@ The launcher starts Codex with renderer DevTools on `127.0.0.1:9322` and the Ele
 * Supplies an in-memory P-256 signing implementation.
 * Encrypts private keys with Windows DPAPI using `CurrentUser` scope.
 * Stores encrypted keys in `\.codex\remote-control-device-keys.windows.json`.
+* Reconciles connected hosts' local project metadata and existing thread mappings with the controller every 30 seconds.
 
 ## Disable or remove
 
@@ -84,7 +86,7 @@ You can then delete this gist folder. No installed Codex files need restoration.
 * **The tab is missing:** Confirm Codex was launched by `launch-codex-remote-control.ps1`, then inspect `%TEMP%\codexwinsync.log`.
 * **Authorization fails before linking:** Confirm MFA was enabled before starting device enrollment, then retry **Add**.
 * **No devices appear:** Confirm the other Codex host is signed in to the same account, online, and configured to allow remote control.
-* **Existing remote projects are missing:** Keep the host connected for up to 30 seconds. Confirm the runtime log contains `Codex remote-project metadata sync is active.` and relaunch with the script if it does not.
+* **Existing remote projects or chats are missing:** Keep the host connected for up to 30 seconds. Confirm the runtime log contains `Codex remote workspace metadata sync is active.` and relaunch with the script if it does not.
 * **A Codex update breaks the launcher:** Launch Codex normally and stop using the override until the relevant gate and device-key code are reviewed for the new build.
 
 ## Credits
@@ -102,4 +104,3 @@ You can then delete this gist folder. No installed Codex files need restoration.
 
 
 This project is an independent, community-maintained workaround and is not affiliated with or endorsed by OpenAI.
-

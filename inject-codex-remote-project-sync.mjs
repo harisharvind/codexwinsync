@@ -6,7 +6,7 @@ const endpoint = `http://127.0.0.1:${port}/json/list`;
 
 const syncSource = String.raw`
 (() => {
-  const version = "codex-windows-remote-project-sync-v2";
+  const version = "codex-windows-remote-workspace-sync-v7";
   const intervalMilliseconds = 30000;
 
   if (globalThis.__codexRemoteProjectSyncVersion === version) {
@@ -27,7 +27,12 @@ const syncSource = String.raw`
     connectedHostCount: 0,
     discoveredProjectCount: 0,
     importedProjectCount: 0,
+    discoveredChatCount: 0,
+    importedChatCount: 0,
+    convertedProjectlessChatCount: 0,
+    hydratedChatCount: 0,
     imports: [],
+    chatImports: [],
     skippedHosts: [],
   };
 
@@ -164,6 +169,12 @@ const syncSource = String.raw`
     return windowsHost ? normalized.toLowerCase() : normalized;
   }
 
+  function pathContains(rootPath, candidatePath, windowsHost) {
+    const root = normalizedPath(rootPath, windowsHost);
+    const candidate = normalizedPath(candidatePath, windowsHost);
+    return root.length > 0 && (candidate === root || candidate.startsWith(root + "/"));
+  }
+
   function projectsFromState(hostId, state, connection) {
     const projects = state?.["local-projects"];
     const candidates = [];
@@ -200,7 +211,7 @@ const syncSource = String.raw`
     return candidates;
   }
 
-  async function readRemoteProjects(connection) {
+  async function readRemoteState(connection) {
     const homeResult = await fetchFromCodex("home-directory", { hostId: connection.hostId });
     const home = homeResult?.homeDirectory;
     if (typeof home !== "string" || home.length === 0) {
@@ -213,46 +224,261 @@ const syncSource = String.raw`
       ".codex",
       ".codex-global-state.json",
     );
-    const file = await requestAppServer(connection.hostId, "fs/readFile", { path: statePath });
+    const file = await requestAppServer(
+      connection.hostId,
+      "fs/readFile",
+      { path: statePath },
+      30000,
+    );
     if (typeof file?.dataBase64 !== "string") {
       throw new Error("Remote Codex state file was unavailable");
     }
 
-    return projectsFromState(
-      connection.hostId,
-      JSON.parse(decodeBase64Utf8(file.dataBase64)),
-      connection,
-    );
+    const state = JSON.parse(decodeBase64Utf8(file.dataBase64));
+    return {
+      projects: projectsFromState(connection.hostId, state, connection),
+    };
+  }
+
+  async function listRemoteThreads(connection) {
+    const threads = [];
+    const seenThreadIds = new Set();
+    const seenCursors = new Set();
+    let cursor = null;
+
+    for (let page = 0; page < 100; page++) {
+      const result = await requestAppServer(connection.hostId, "thread/list", {
+        limit: 100,
+        sortKey: "updated_at",
+        ...(cursor == null ? {} : { cursor }),
+      });
+      const pageThreads = Array.isArray(result?.data) ? result.data : [];
+      for (const thread of pageThreads) {
+        if (
+          typeof thread?.id !== "string" ||
+          seenThreadIds.has(thread.id) ||
+          thread.ephemeral === true
+        ) continue;
+        seenThreadIds.add(thread.id);
+        threads.push(thread);
+      }
+
+      const nextCursor = typeof result?.nextCursor === "string" ? result.nextCursor : null;
+      if (nextCursor == null || seenCursors.has(nextCursor)) break;
+      seenCursors.add(nextCursor);
+      cursor = nextCursor;
+    }
+
+    return threads;
+  }
+
+  function findProjectForThread(projects, hostId, cwd, windowsHost) {
+    return projects
+      .filter((project) => (
+        project.hostId === hostId &&
+        typeof project.remotePath === "string" &&
+        pathContains(project.remotePath, cwd, windowsHost)
+      ))
+      .sort((left, right) => (
+        normalizedPath(right.remotePath, windowsHost).length -
+        normalizedPath(left.remotePath, windowsHost).length
+      ))[0] ?? null;
+  }
+
+  function findQueryClient() {
+    const root = globalThis.__codexRoot;
+    if (root == null) return null;
+    const seen = new WeakSet();
+    const stack = [root];
+    let visited = 0;
+
+    while (stack.length > 0 && visited < 10000) {
+      const value = stack.pop();
+      if (
+        value == null ||
+        (typeof value !== "object" && typeof value !== "function") ||
+        seen.has(value)
+      ) continue;
+      seen.add(value);
+      visited++;
+
+      if (
+        typeof value.getQueryCache === "function" &&
+        typeof value.invalidateQueries === "function"
+      ) return value;
+
+      let descriptors;
+      try {
+        descriptors = Object.getOwnPropertyDescriptors(value);
+      } catch {
+        continue;
+      }
+      for (const descriptor of Object.values(descriptors)) {
+        if ("value" in descriptor) stack.push(descriptor.value);
+      }
+    }
+    return null;
+  }
+
+  let internalRequestPromise = null;
+  async function getInternalRequest() {
+    if (internalRequestPromise != null) return internalRequestPromise;
+
+    internalRequestPromise = (async () => {
+      const mainScriptUrl = Array.from(document.scripts)
+        .map((script) => script.src)
+        .find((source) => /\/assets\/index-[^/]+\.js$/u.test(source));
+      if (mainScriptUrl == null) throw new Error("Codex application script was unavailable");
+
+      const mainSource = await fetch(mainScriptUrl).then((response) => {
+        if (!response.ok) throw new Error("Could not inspect the Codex application script");
+        return response.text();
+      });
+      const modulePath = mainSource.match(
+        /\.\/broadcast-query-cache-invalidation-[A-Za-z0-9_-]+\.js/u,
+      )?.[0];
+      if (modulePath == null) throw new Error("Codex internal request module was unavailable");
+
+      const internalModule = await import(new URL(modulePath, mainScriptUrl).href);
+      const request = Object.values(internalModule).find((value) => (
+        typeof value === "function" && /\.sendRequest\(/u.test(String(value))
+      ));
+      if (request == null) throw new Error("Codex internal request function was unavailable");
+      return request;
+    })();
+
+    try {
+      return await internalRequestPromise;
+    } catch (error) {
+      internalRequestPromise = null;
+      throw error;
+    }
+  }
+
+  async function hydrateRemoteChats(hostSnapshots) {
+    const request = await getInternalRequest();
+    let hydratedChatCount = 0;
+
+    for (const { connection, threads } of hostSnapshots) {
+      const threadIds = threads
+        .map((thread) => thread?.id)
+        .filter((threadId) => typeof threadId === "string");
+      if (threadIds.length === 0) continue;
+
+      await request("hydrate-pinned-threads", {
+        hostId: connection.hostId,
+        threadIds,
+      });
+      await request("refresh-recent-conversations-for-host", {
+        hostId: connection.hostId,
+        mode: "expanded",
+        sortKey: "updated_at",
+      });
+      hydratedChatCount += threadIds.length;
+    }
+
+    return hydratedChatCount;
+  }
+
+  function refreshRemoteChatQueries() {
+    const queryClient = findQueryClient();
+    if (queryClient == null) return false;
+    void queryClient.invalidateQueries({
+      predicate(query) {
+        return query.queryKey?.[0] === "recent-conversations-meta";
+      },
+    });
+    return true;
   }
 
   async function syncRemoteProjects() {
     if (status.running) return { ...status };
     status.running = true;
     status.lastError = null;
+    status.discoveredProjectCount = 0;
+    status.importedProjectCount = 0;
+    status.discoveredChatCount = 0;
+    status.importedChatCount = 0;
+    status.convertedProjectlessChatCount = 0;
+    status.hydratedChatCount = 0;
     status.imports = [];
+    status.chatImports = [];
     status.skippedHosts = [];
 
     try {
       const connections = getConnections();
       status.connectedHostCount = connections.length;
 
+      const remoteProjectState = await fetchFromCodex("get-global-state", { key: "remote-projects" });
+      const projectOrderState = await fetchFromCodex("get-global-state", { key: "project-order" });
+      const assignmentState = await fetchFromCodex("get-global-state", { key: "thread-project-assignments" });
+      const projectlessState = await fetchFromCodex("get-global-state", { key: "projectless-thread-ids" });
+      const existing = Array.isArray(remoteProjectState?.value) ? remoteProjectState.value : [];
+      const existingOrder = Array.isArray(projectOrderState?.value) ? projectOrderState.value : [];
+      const existingAssignments = assignmentState?.value && typeof assignmentState.value === "object"
+        ? assignmentState.value
+        : {};
+      const existingProjectlessThreadIds = Array.isArray(projectlessState?.value)
+        ? projectlessState.value
+        : [];
+
       const candidates = [];
+      const hostSnapshots = [];
       for (const connection of connections) {
+        let remoteState = { projects: [] };
+        let threads = [];
         try {
-          candidates.push(...await readRemoteProjects(connection));
+          remoteState = await readRemoteState(connection);
+          candidates.push(...remoteState.projects);
         } catch (error) {
           status.skippedHosts.push({
             hostId: connection.hostId,
+            stage: "project-state",
             error: error instanceof Error ? error.message : String(error),
           });
         }
+        try {
+          threads = await listRemoteThreads(connection);
+        } catch (error) {
+          status.skippedHosts.push({
+            hostId: connection.hostId,
+            stage: "thread-list",
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+
+        const knownProjects = [...existing, ...candidates];
+        for (const thread of threads) {
+          const cwd = thread?.cwd;
+          if (
+            typeof cwd !== "string" ||
+            cwd.length === 0 ||
+            cwd === "~" ||
+            findProjectForThread(
+              knownProjects,
+              connection.hostId,
+              cwd,
+              isWindowsHost(connection),
+            ) != null
+          ) continue;
+
+          const candidate = {
+            hostId: connection.hostId,
+            remotePath: cwd,
+            label: pathLabel(cwd),
+            windowsHost: isWindowsHost(connection),
+          };
+          candidates.push(candidate);
+          knownProjects.push(candidate);
+        }
+
+        hostSnapshots.push({ connection, threads });
       }
       status.discoveredProjectCount = candidates.length;
-
-      const remoteProjectState = await fetchFromCodex("get-global-state", { key: "remote-projects" });
-      const projectOrderState = await fetchFromCodex("get-global-state", { key: "project-order" });
-      const existing = Array.isArray(remoteProjectState?.value) ? remoteProjectState.value : [];
-      const existingOrder = Array.isArray(projectOrderState?.value) ? projectOrderState.value : [];
+      status.discoveredChatCount = hostSnapshots.reduce(
+        (total, snapshot) => total + snapshot.threads.length,
+        0,
+      );
       const existingKeys = new Set(existing.map((project) => {
         const connection = connections.find((item) => item.hostId === project.hostId);
         return project.hostId + "\n" + normalizedPath(
@@ -288,14 +514,84 @@ const syncSource = String.raw`
         });
       }
 
+      const allRemoteProjects = [...imported, ...existing];
+      const nextAssignments = { ...existingAssignments };
+      const projectlessThreadIdSet = new Set(existingProjectlessThreadIds);
+      const convertedProjectlessThreadIds = new Set();
+      const chatImports = [];
+
+      for (const { connection, threads } of hostSnapshots) {
+        const windowsHost = isWindowsHost(connection);
+        for (const thread of threads) {
+          if (nextAssignments[thread.id] == null && typeof thread.cwd === "string") {
+            const project = findProjectForThread(
+              allRemoteProjects,
+              connection.hostId,
+              thread.cwd,
+              windowsHost,
+            );
+            if (project != null) {
+              nextAssignments[thread.id] = {
+                projectKind: "remote",
+                projectId: project.id,
+                path: project.remotePath,
+                hostId: connection.hostId,
+                pendingCoreUpdate: false,
+              };
+              chatImports.push({
+                threadId: thread.id,
+                hostId: connection.hostId,
+                projectId: project.id,
+              });
+            }
+          }
+
+          if (
+            nextAssignments[thread.id]?.projectKind === "remote" &&
+            projectlessThreadIdSet.delete(thread.id)
+          ) {
+            convertedProjectlessThreadIds.add(thread.id);
+          }
+        }
+      }
+
+      if (chatImports.length > 0) {
+        await fetchFromCodex("set-global-state", {
+          key: "thread-project-assignments",
+          value: nextAssignments,
+        });
+      }
+      if (convertedProjectlessThreadIds.size > 0) {
+        await fetchFromCodex("set-global-state", {
+          key: "projectless-thread-ids",
+          value: [...projectlessThreadIdSet],
+        });
+      }
+
       status.importedProjectCount = imported.length;
+      status.importedChatCount = new Set([
+        ...chatImports.map((chat) => chat.threadId),
+        ...convertedProjectlessThreadIds,
+      ]).size;
+      status.convertedProjectlessChatCount = convertedProjectlessThreadIds.size;
       status.imports = imported.map(({ hostId, label, remotePath }) => ({ hostId, label, remotePath }));
+      status.chatImports = chatImports;
+      try {
+        status.hydratedChatCount = await hydrateRemoteChats(hostSnapshots);
+      } catch (error) {
+        status.skippedHosts.push({
+          hostId: "desktop",
+          stage: "chat-cache",
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
       status.lastRunAt = new Date().toISOString();
-      return { ...status };
+      refreshRemoteChatQueries();
+      return { ...status, running: false };
     } catch (error) {
       status.lastError = error instanceof Error ? error.message : String(error);
       status.lastRunAt = new Date().toISOString();
-      return { ...status };
+      return { ...status, running: false };
     } finally {
       status.running = false;
     }
@@ -352,14 +648,14 @@ async function main() {
       try {
         await injectTarget(target);
         injectedTargets.add(targetKey);
-        console.log(`Installed remote-project sync in ${target.title || target.url || "Codex"}.`);
+        console.log(`Installed remote workspace sync in ${target.title || target.url || "Codex"}.`);
       } catch (error) {
         lastError = error;
       }
     }
 
     if (injectedTargets.size > 0 && await hasInstalledSync(targets)) {
-      console.log("Codex remote-project metadata sync is active.");
+      console.log("Codex remote workspace metadata sync is active.");
       return;
     }
     await delay(250);
@@ -368,7 +664,7 @@ async function main() {
   if (injectedTargets.size === 0) {
     throw new Error(`Timed out waiting for Codex renderer debugging on port ${port}: ${lastError?.message ?? "no target"}`);
   }
-  throw new Error(lastError?.message ?? "Remote-project sync did not become active");
+  throw new Error(lastError?.message ?? "Remote workspace sync did not become active");
 }
 
 async function hasInstalledSync(targets) {
