@@ -1,13 +1,13 @@
 # codexwinsync
 
-Enable **Settings > Connections > Control other devices** in Codex Desktop for Windows without modifying `ChatGPT.exe`, `app.asar`, or any file under `C:\\\\\\\\\\\\\\\\Program Files\\\\\\\\\\\\\\\\WindowsApps`.
+Enable **Settings > Connections > Control other devices** in Codex Desktop for Windows without modifying `ChatGPT.exe`, `app.asar`, or any file under `C:\Program Files\WindowsApps`.
 
 Tested with Codex Desktop `26.715.7063.0` and `26.715.10079.0` on Windows 11.
 
-> \\\\\\\\\\\\\\\[!IMPORTANT]
-> Enable multi-factor authentication (MFA) on your OpenAI/ChatGPT account \\\\\\\\\\\\\\\*\\\\\\\\\\\\\\\*before\\\\\\\\\\\\\\\*\\\\\\\\\\\\\\\* linking the account or adding a device. Remote-control enrollment requires MFA to already be active.
+> [!IMPORTANT]
+> Enable multi-factor authentication (MFA) on your OpenAI/ChatGPT account \*\*before\*\* linking the account or adding a device. Remote-control enrollment requires MFA to already be active.
 
-> \\\\\\\\\\\\\\\[!WARNING]
+> [!WARNING]
 > This is an unofficial, version-sensitive runtime experiment. It launches Codex with localhost debugging ports that can execute code inside the Codex process. Use it only on a trusted machine, and launch Codex normally when you are finished.
 
 ## What works
@@ -18,10 +18,6 @@ Tested with Codex Desktop `26.715.7063.0` and `26.715.10079.0` on Windows 11.
 * Opens projects on a connected remote host.
 * Imports preexisting projects from connected hosts into the Windows sidebar.
 * Leaves the installed Codex package unchanged.
-
-!\[Control other devices in Settings](https://gist.github.com/hunterbeach/dc4b74bda0e045e33f308099182b4f80/raw/cc7746ab3e0e4110788a3b5f91fda7ad4da16322/Connections%2520Page.png)
-
-!\[Creating a project on a connected host](https://gist.github.com/hunterbeach/dc4b74bda0e045e33f308099182b4f80/raw/cc7746ab3e0e4110788a3b5f91fda7ad4da16322/New%2520Codex%2520Project%2520Page.png)
 
 ## Requirements
 
@@ -36,7 +32,7 @@ Tested with Codex Desktop `26.715.7063.0` and `26.715.10079.0` on Windows 11.
 1. Clone the repository:
 
 ```powershell
-   git clone https://github.com/<your-github-username>/codexwinsync.git
+   git clone https://github.com/harisharvind/codexwinsync.git
    cd codexwinsync
    ```
 
@@ -44,14 +40,14 @@ Tested with Codex Desktop `26.715.7063.0` and `26.715.10079.0` on Windows 11.
 3. Run the launcher:
 
 ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File .\\\\\\\\\\\\\\\\launch-codex-remote-control.ps1
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\launch-codex-remote-control.ps1
    ```
 
 4. In Codex, open **Settings > Connections > Control other devices**.
 5. Select **Add** and complete authorization with the MFA-enabled account.
 6. Create a project and choose the connected device under **New remote project**.
 
-The launcher writes diagnostics to `%TEMP%\\\\\\\\\\\\\\\\codexwinsync.log`.
+The launcher writes diagnostics to `%TEMP%\codexwinsync.log`.
 
 Preexisting projects normally appear within 30 seconds after their host connects. The importer reads only project names and root paths from that host's Codex global state, adds missing entries to the Windows controller's project index, and never copies or deletes project files.
 
@@ -69,7 +65,7 @@ The launcher starts Codex with renderer DevTools on `127.0.0.1:9322` and the Ele
 * Intercepts only requests for `remote-control-device-key.node`.
 * Supplies an in-memory P-256 signing implementation.
 * Encrypts private keys with Windows DPAPI using `CurrentUser` scope.
-* Stores encrypted keys in `\\\\\\\\\\\\\\\~\\\\\\\\\\\\\\\\.codex\\\\\\\\\\\\\\\\remote-control-device-keys.windows.json`.
+* Stores encrypted keys in `\.codex\remote-control-device-keys.windows.json`.
 
 ## Disable or remove
 
@@ -78,14 +74,14 @@ To disable the runtime hooks, quit Codex and launch it normally. The hooks and d
 After revoking remote-control access in Codex, you can optionally remove the encrypted Windows key store:
 
 ```powershell
-Remove-Item -LiteralPath "$HOME\\\\\\\\\\\\\\\\.codex\\\\\\\\\\\\\\\\remote-control-device-keys.windows.json"
+Remove-Item -LiteralPath "$HOME\.codex\remote-control-device-keys.windows.json"
 ```
 
 You can then delete this gist folder. No installed Codex files need restoration.
 
 ## Troubleshooting
 
-* **The tab is missing:** Confirm Codex was launched by `launch-codex-remote-control.ps1`, then inspect `%TEMP%\\\\\\\\\\\\\\\\codexwinsync.log`.
+* **The tab is missing:** Confirm Codex was launched by `launch-codex-remote-control.ps1`, then inspect `%TEMP%\codexwinsync.log`.
 * **Authorization fails before linking:** Confirm MFA was enabled before starting device enrollment, then retry **Add**.
 * **No devices appear:** Confirm the other Codex host is signed in to the same account, online, and configured to allow remote control.
 * **Existing remote projects are missing:** Keep the host connected for up to 30 seconds. Confirm the runtime log contains `Codex remote-project metadata sync is active.` and relaunch with the script if it does not.
