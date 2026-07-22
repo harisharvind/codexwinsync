@@ -89,11 +89,11 @@ You can then delete this gist folder. No installed Codex files need restoration.
 
 ## Credits
 
-\- \*\*\[Hunter Beach](https://github.com/hunterbeach)\*\* —  fixed the sync part and documented the workaround.
+\- [Hunter Beach](https://github.com/hunterbeach) —  fixed the sync part and documented the workaround.
 
-\- \*\*\[h5kk](https://github.com/h5kk)\*\* — discovered and verified that patching the feature flag enables the complete OAuth and device-pairing flow.
+\- [h5kk](https://github.com/h5kk) — discovered and verified that patching the feature flag enables the complete OAuth and device-pairing flow.
 
-\- \*\*\[russlib](https://github.com/russlib)\*\* — identified feature gate `782640499` and documented how the Windows bundle hides the controller tab.
+\- [russlib](https://github.com/russlib)\ — identified feature gate `782640499` and documented how the Windows bundle hides the controller tab.
 
 \- Everyone contributing research, testing, and reports to \[OpenAI Codex issue #28919](https://github.com/openai/codex/issues/28919).
 
